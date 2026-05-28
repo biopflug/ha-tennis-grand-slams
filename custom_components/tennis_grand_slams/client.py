@@ -260,6 +260,17 @@ class ESPNClient:
         return None
 
     def _build_slam_windows(self, matches: list[Match], today: date) -> list[SlamWindow]:
+        """Build Grand Slam windows from ESPN data plus built-in calendar dates.
+
+        ESPN does not always return the currently running Grand Slam in the wide
+        scoreboard request. In the first version this meant: if ESPN returned
+        Wimbledon future events but no Roland-Garros events, the integration
+        displayed Wimbledon even while Roland-Garros was running.
+
+        To avoid that, the built-in calendar is always merged in for the current
+        year and the following year. ESPN data is then only used to improve match
+        lists, not as the sole source for tournament windows.
+        """
         grouped: dict[str, list[date]] = {key: [] for key in SLAM_DEFINITIONS}
         for match in matches:
             if match.tournament_key and match.start_time:
@@ -287,13 +298,30 @@ class ESPNClient:
                 )
             )
 
-        # If ESPN returns no Grand Slam events at all, keep HA useful with conservative seasonal guesses.
-        if not windows:
-            windows = self._fallback_windows(today.year)
-        elif not any(s.start >= today for s in windows) and today.month >= 9:
-            windows.extend(self._fallback_windows(today.year + 1))
+        # Always add built-in calendar windows. ESPN's tennis scoreboard is useful
+        # for matches, but too inconsistent to be the only source for date logic.
+        windows.extend(self._fallback_windows(today.year))
+        windows.extend(self._fallback_windows(today.year + 1))
 
-        return sorted({(w.key, w.start): w for w in windows}.values(), key=lambda w: w.start)
+        # Merge duplicate tournament/year windows by taking the widest date range.
+        merged: dict[tuple[str, int], SlamWindow] = {}
+        for window in windows:
+            merge_key = (window.key, window.start.year)
+            existing = merged.get(merge_key)
+            if existing is None:
+                merged[merge_key] = window
+                continue
+            merged[merge_key] = SlamWindow(
+                key=existing.key,
+                name=existing.name,
+                location=existing.location,
+                start=min(existing.start, window.start),
+                end=max(existing.end, window.end),
+                official_url=existing.official_url,
+                espn_url=existing.espn_url,
+            )
+
+        return sorted(merged.values(), key=lambda w: w.start)
 
     @staticmethod
     def _fallback_windows(year: int) -> list[SlamWindow]:
