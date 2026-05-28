@@ -1,0 +1,13 @@
+{
+  "domain": "tennis_grand_slams",
+  "name": "Tennis Grand Slams",
+  "codeowners": ["@hannesnique"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/hannesnique/ha-tennis-grand-slams",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/hannesnique/ha-tennis-grand-slams/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
