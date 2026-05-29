@@ -79,6 +79,10 @@ In der Integration kannst du einstellen:
 - Suchzeitraum in Tagen, Standard: `420`
 - Aktualisierungsintervall in Minuten, Standard: `15`
 
+## v0.1.4 Fix
+
+Version 0.1.4 nutzt für Tennis-Scores den Endpoint `site.api.espn.com` statt `site.web.api.espn.com`, weil der Web-Endpoint bei Tennis oft nur Turnier-/Scoreboard-Shells liefert. Dadurch konnten zwar Raw Events gezählt werden, aber keine echten Matches mit Spieler*innen geparst werden.
+
 ## Hinweise
 
 Diese Integration verändert dein Dashboard nicht automatisch. Home Assistant/HACS-Integrationen sollten nicht ungefragt Lovelace-Karten anlegen. Deshalb liegt die Dashboard-Konfiguration als Beispiel-Datei bei.
