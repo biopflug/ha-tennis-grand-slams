@@ -5,7 +5,7 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 import logging
-from typing import Any
+from typing import Any, Iterable
 
 from aiohttp import ClientError, ClientSession
 
@@ -33,6 +33,8 @@ class Match:
     start_time: datetime | None
     competitors: list[dict[str, Any]] = field(default_factory=list)
     detail: str | None = None
+    score: str | None = None
+    round: str | None = None
     url: str = ESPN_SCOREBOARD_URL
 
     @property
@@ -58,6 +60,8 @@ class Match:
             "state": self.state,
             "status": self.status,
             "detail": self.detail,
+            "score": self.score,
+            "round": self.round,
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "competitors": self.competitors,
             "url": self.url,
@@ -109,10 +113,11 @@ class TennisData:
 
 
 class ESPNClient:
-    """Small ESPN scoreboard client.
+    """Small ESPN tennis scoreboard client.
 
-    ESPN tennis endpoints are undocumented but power ESPN's public tennis scoreboard.
-    The integration is deliberately defensive because the response shape can change.
+    ESPN tennis endpoints are undocumented. v0.1.2 queries individual days
+    around today because very wide date ranges can return only tournament-level
+    shells such as "Roland Garros / Final" instead of real match rows.
     """
 
     def __init__(
@@ -131,49 +136,102 @@ class ESPNClient:
     async def async_get_data(self) -> TennisData:
         """Fetch and normalize all tennis data."""
         today = datetime.now(timezone.utc).date()
-        start = today - timedelta(days=7)
-        end = today + timedelta(days=self._days_ahead)
+        slam_windows = self._fallback_windows(today.year) + self._fallback_windows(today.year + 1)
+        current = next((s for s in slam_windows if s.start <= today <= s.end), None)
+        upcoming_slams = [s for s in slam_windows if s.start > today]
+        next_slam = min(upcoming_slams, key=lambda s: s.start) if upcoming_slams else None
+        relevant_key = current.key if current else next_slam.key if next_slam else None
+
+        fetch_start, fetch_end = self._scoreboard_window(today, current, next_slam)
+        fetch_dates = list(self._date_range(fetch_start, fetch_end))
+
         raw_payloads = await asyncio.gather(
-            *(self._async_fetch_scoreboard(tour, start, end) for tour in TOURS),
+            *(
+                self._async_fetch_scoreboard_for_day(tour, day)
+                for tour in TOURS
+                for day in fetch_dates
+            ),
             return_exceptions=True,
         )
 
         events: list[dict[str, Any]] = []
-        for tour, payload in zip(TOURS, raw_payloads, strict=False):
-            if isinstance(payload, Exception):
-                _LOGGER.warning("Could not fetch %s tennis data: %s", tour.upper(), payload)
-                continue
-            for event in payload.get("events", []) or []:
-                event["_tour"] = tour
-                events.append(event)
+        index = 0
+        for tour in TOURS:
+            for day in fetch_dates:
+                payload = raw_payloads[index]
+                index += 1
+                if isinstance(payload, Exception):
+                    _LOGGER.debug("Could not fetch %s tennis data for %s: %s", tour.upper(), day, payload)
+                    continue
+                for event in payload.get("events", []) or []:
+                    event["_tour"] = tour
+                    event["_query_date"] = day.isoformat()
+                    events.append(event)
 
-        matches = [self._event_to_match(event) for event in events]
-        matches = [match for match in matches if match is not None]
-        slam_windows = self._build_slam_windows(matches, today)
+        matches: list[Match] = []
+        seen_ids: set[str] = set()
+        for event in events:
+            for match in self._event_to_matches(event):
+                if match.id in seen_ids:
+                    continue
+                seen_ids.add(match.id)
+                matches.append(match)
 
-        current = next((s for s in slam_windows if s.start <= today <= s.end), None)
-        upcoming = [s for s in slam_windows if s.start > today]
-        next_slam = min(upcoming, key=lambda s: s.start) if upcoming else None
-
-        relevant_key = current.key if current else next_slam.key if next_slam else None
         relevant_matches = [m for m in matches if relevant_key and m.tournament_key == relevant_key]
+
+        live_matches = [m for m in relevant_matches if m.is_live]
+        upcoming_matches = [
+            m for m in relevant_matches
+            if m.is_upcoming and (m.start_time is None or m.start_time.date() >= today)
+        ]
+        recent_results = [
+            m for m in relevant_matches
+            if m.is_complete and (m.start_time is None or m.start_time.date() >= today - timedelta(days=3))
+        ]
 
         return TennisData(
             current_slam=current,
             next_slam=next_slam,
             slam_windows=slam_windows,
-            live_matches=sorted([m for m in relevant_matches if m.is_live], key=self._sort_match),
-            upcoming_matches=sorted([m for m in relevant_matches if m.is_upcoming], key=self._sort_match)[:30],
-            recent_results=sorted([m for m in relevant_matches if m.is_complete], key=self._sort_match, reverse=True)[:20],
+            live_matches=sorted(live_matches, key=self._sort_match),
+            upcoming_matches=sorted(upcoming_matches, key=self._sort_match)[:40],
+            recent_results=sorted(recent_results, key=self._sort_match, reverse=True)[:30],
             all_matches=sorted(relevant_matches, key=self._sort_match),
             generated_at=datetime.now(timezone.utc),
         )
 
-    async def _async_fetch_scoreboard(self, tour: str, start: date, end: date) -> dict[str, Any]:
+    def _scoreboard_window(
+        self,
+        today: date,
+        current: SlamWindow | None,
+        next_slam: SlamWindow | None,
+    ) -> tuple[date, date]:
+        """Return the date window used for daily scoreboard requests."""
+        look_back = today - timedelta(days=3)
+
+        if current:
+            end = min(current.end, today + timedelta(days=min(max(self._days_ahead, 1), 14)))
+            return max(current.start, look_back), max(today, end)
+
+        if next_slam:
+            end = min(next_slam.end, next_slam.start + timedelta(days=7))
+            return max(today, next_slam.start - timedelta(days=1)), end
+
+        return look_back, today + timedelta(days=7)
+
+    @staticmethod
+    def _date_range(start: date, end: date) -> Iterable[date]:
+        if end < start:
+            end = start
+        max_days = 21
+        for offset in range(min((end - start).days + 1, max_days)):
+            yield start + timedelta(days=offset)
+
+    async def _async_fetch_scoreboard_for_day(self, tour: str, day: date) -> dict[str, Any]:
         params = {
             "region": self._region,
             "lang": self._language,
-            "dates": f"{start:%Y%m%d}-{end:%Y%m%d}",
+            "dates": f"{day:%Y%m%d}",
             "limit": "1000",
         }
         url = ESPN_SCOREBOARD.format(tour=tour)
@@ -184,27 +242,89 @@ class ESPNClient:
         except (ClientError, asyncio.TimeoutError) as exc:
             raise TennisGrandSlamError(str(exc)) from exc
 
-    def _event_to_match(self, event: dict[str, Any]) -> Match | None:
+    def _event_to_matches(self, event: dict[str, Any]) -> list[Match]:
+        """Convert one ESPN event to zero, one or many match entities."""
         tournament_name = self._extract_tournament_name(event)
-        tournament_key = self._match_slam_key(tournament_name or event.get("name", ""))
+        tournament_key = self._match_slam_key(" ".join([
+            tournament_name,
+            str(event.get("name", "")),
+            str(event.get("shortName", "")),
+        ]))
         if tournament_key is None:
-            return None
+            return []
 
         competitions = event.get("competitions") or []
-        competition = competitions[0] if competitions else {}
-        status = competition.get("status") or event.get("status") or {}
-        status_type = status.get("type") or {}
-        state = (status_type.get("state") or "pre").lower()
-        status_text = status_type.get("shortDetail") or status_type.get("detail") or status_type.get("description") or state
-        detail = status_type.get("detail") or status_text
-        start_time = self._parse_dt(event.get("date") or competition.get("date"))
-        competitors = []
+        if not competitions:
+            return []
+
+        matches: list[Match] = []
+        for competition in competitions:
+            competitors = self._extract_competitors(competition)
+            real_names = [c.get("name") for c in competitors if c.get("name")]
+            if len(real_names) < 2:
+                continue
+
+            status = competition.get("status") or event.get("status") or {}
+            status_type = status.get("type") or {}
+            state = (status_type.get("state") or "pre").lower()
+            status_text = (
+                status_type.get("shortDetail")
+                or status_type.get("detail")
+                or status_type.get("description")
+                or state
+            )
+            detail = status_type.get("detail") or status_text
+            start_time = self._parse_dt(competition.get("date") or event.get("date"))
+
+            round_name = self._extract_round(event, competition)
+            name = self._match_name(real_names, event, competition)
+            short_name = self._short_match_name(competitors, name)
+            score = self._format_score(competitors)
+
+            links = competition.get("links") or event.get("links") or []
+            url = next((link.get("href") for link in links if link.get("href")), ESPN_SCOREBOARD_URL)
+
+            matches.append(
+                Match(
+                    id=str(competition.get("id") or event.get("id") or f"{name}-{start_time}"),
+                    name=name,
+                    short_name=short_name,
+                    tournament=tournament_name or SLAM_DEFINITIONS[tournament_key]["name"],
+                    tournament_key=tournament_key,
+                    tour=(event.get("_tour") or "").lower(),
+                    state=state,
+                    status=status_text,
+                    start_time=start_time,
+                    competitors=competitors,
+                    detail=detail,
+                    score=score,
+                    round=round_name,
+                    url=url,
+                )
+            )
+        return matches
+
+    def _extract_competitors(self, competition: dict[str, Any]) -> list[dict[str, Any]]:
+        competitors: list[dict[str, Any]] = []
         for comp in competition.get("competitors", []) or []:
             athlete = comp.get("athlete") or comp.get("team") or {}
+            name = (
+                athlete.get("displayName")
+                or athlete.get("fullName")
+                or athlete.get("name")
+                or comp.get("displayName")
+                or comp.get("name")
+            )
+            short_name = (
+                athlete.get("shortName")
+                or athlete.get("abbreviation")
+                or comp.get("abbreviation")
+                or name
+            )
             competitors.append(
                 {
-                    "name": athlete.get("displayName") or athlete.get("name") or comp.get("displayName"),
-                    "short_name": athlete.get("shortName") or comp.get("abbreviation"),
+                    "name": name,
+                    "short_name": short_name,
                     "score": comp.get("score"),
                     "winner": comp.get("winner"),
                     "home_away": comp.get("homeAway"),
@@ -212,43 +332,74 @@ class ESPNClient:
                     "sets": self._extract_linescores(comp),
                 }
             )
-
-        links = event.get("links") or competition.get("links") or []
-        url = next((link.get("href") for link in links if link.get("href")), ESPN_SCOREBOARD_URL)
-
-        return Match(
-            id=str(event.get("id") or competition.get("id") or ""),
-            name=event.get("name") or competition.get("name") or "Tennis match",
-            short_name=event.get("shortName") or competition.get("shortName") or event.get("name") or "Tennis",
-            tournament=tournament_name or SLAM_DEFINITIONS[tournament_key]["name"],
-            tournament_key=tournament_key,
-            tour=(event.get("_tour") or "").lower(),
-            state=state,
-            status=status_text,
-            start_time=start_time,
-            competitors=competitors,
-            detail=detail,
-            url=url,
-        )
+        return competitors
 
     @staticmethod
     def _extract_linescores(comp: dict[str, Any]) -> list[Any]:
         linescores = comp.get("linescores") or []
-        return [line.get("value", line) if isinstance(line, dict) else line for line in linescores]
+        values: list[Any] = []
+        for line in linescores:
+            if isinstance(line, dict):
+                values.append(line.get("displayValue") or line.get("value") or line.get("score") or line)
+            else:
+                values.append(line)
+        return values
+
+    @staticmethod
+    def _match_name(real_names: list[str], event: dict[str, Any], competition: dict[str, Any]) -> str:
+        if len(real_names) >= 2:
+            return f"{real_names[0]} vs. {real_names[1]}"
+        return competition.get("name") or event.get("name") or "Tennis Match"
+
+    @staticmethod
+    def _short_match_name(competitors: list[dict[str, Any]], fallback: str) -> str:
+        names = [c.get("short_name") or c.get("name") for c in competitors if c.get("short_name") or c.get("name")]
+        if len(names) >= 2:
+            return f"{names[0]} vs. {names[1]}"
+        return fallback
+
+    @staticmethod
+    def _format_score(competitors: list[dict[str, Any]]) -> str | None:
+        if len(competitors) < 2:
+            return None
+        set_parts: list[str] = []
+        left_sets = competitors[0].get("sets") or []
+        right_sets = competitors[1].get("sets") or []
+        for left, right in zip(left_sets, right_sets, strict=False):
+            if left is None or right is None:
+                continue
+            set_parts.append(f"{left}:{right}")
+        if set_parts:
+            return ", ".join(set_parts)
+
+        left_score = competitors[0].get("score")
+        right_score = competitors[1].get("score")
+        if left_score is not None and right_score is not None:
+            return f"{left_score}:{right_score}"
+        return None
+
+    @staticmethod
+    def _extract_round(event: dict[str, Any], competition: dict[str, Any]) -> str | None:
+        candidates: list[str] = []
+        for obj in (competition.get("round"), event.get("round"), competition.get("type"), event.get("type")):
+            if isinstance(obj, dict):
+                candidates.extend(str(obj.get(k, "")) for k in ("displayName", "name", "description", "abbreviation"))
+            elif obj:
+                candidates.append(str(obj))
+        return next((c for c in candidates if c and c.lower() != "none"), None)
 
     @staticmethod
     def _extract_tournament_name(event: dict[str, Any]) -> str:
         candidates: list[str] = []
+        candidates.extend(str(event.get(k, "")) for k in ("name", "shortName"))
         for key in ("season", "league", "group"):
             obj = event.get(key) or {}
             if isinstance(obj, dict):
-                candidates.extend(str(obj.get(k, "")) for k in ("name", "displayName", "description"))
-        competitions = event.get("competitions") or []
-        for competition in competitions:
+                candidates.extend(str(obj.get(k, "")) for k in ("name", "displayName", "description", "slug"))
+        for competition in event.get("competitions") or []:
             tournament = competition.get("tournament") or competition.get("series") or {}
             if isinstance(tournament, dict):
-                candidates.extend(str(tournament.get(k, "")) for k in ("name", "displayName", "description"))
-        candidates.extend(str(event.get(k, "")) for k in ("name", "shortName"))
+                candidates.extend(str(tournament.get(k, "")) for k in ("name", "displayName", "description", "slug"))
         return next((c for c in candidates if c and c.lower() != "none"), "")
 
     @staticmethod
@@ -259,75 +410,11 @@ class ESPNClient:
                 return key
         return None
 
-    def _build_slam_windows(self, matches: list[Match], today: date) -> list[SlamWindow]:
-        """Build Grand Slam windows from ESPN data plus built-in calendar dates.
-
-        ESPN does not always return the currently running Grand Slam in the wide
-        scoreboard request. In the first version this meant: if ESPN returned
-        Wimbledon future events but no Roland-Garros events, the integration
-        displayed Wimbledon even while Roland-Garros was running.
-
-        To avoid that, the built-in calendar is always merged in for the current
-        year and the following year. ESPN data is then only used to improve match
-        lists, not as the sole source for tournament windows.
-        """
-        grouped: dict[str, list[date]] = {key: [] for key in SLAM_DEFINITIONS}
-        for match in matches:
-            if match.tournament_key and match.start_time:
-                grouped[match.tournament_key].append(match.start_time.date())
-
-        windows: list[SlamWindow] = []
-        for key, dates in grouped.items():
-            if not dates:
-                continue
-            slam = SLAM_DEFINITIONS[key]
-            # ESPN sometimes only returns main draw event dates. Padding gives a nicer dashboard window.
-            start = min(dates)
-            end = max(dates)
-            if (end - start).days < 10:
-                start = start - timedelta(days=1)
-                end = end + timedelta(days=1)
-            windows.append(
-                SlamWindow(
-                    key=key,
-                    name=slam["name"],
-                    location=slam["location"],
-                    start=start,
-                    end=end,
-                    official_url=slam["official_url"],
-                )
-            )
-
-        # Always add built-in calendar windows. ESPN's tennis scoreboard is useful
-        # for matches, but too inconsistent to be the only source for date logic.
-        windows.extend(self._fallback_windows(today.year))
-        windows.extend(self._fallback_windows(today.year + 1))
-
-        # Merge duplicate tournament/year windows by taking the widest date range.
-        merged: dict[tuple[str, int], SlamWindow] = {}
-        for window in windows:
-            merge_key = (window.key, window.start.year)
-            existing = merged.get(merge_key)
-            if existing is None:
-                merged[merge_key] = window
-                continue
-            merged[merge_key] = SlamWindow(
-                key=existing.key,
-                name=existing.name,
-                location=existing.location,
-                start=min(existing.start, window.start),
-                end=max(existing.end, window.end),
-                official_url=existing.official_url,
-                espn_url=existing.espn_url,
-            )
-
-        return sorted(merged.values(), key=lambda w: w.start)
-
     @staticmethod
     def _fallback_windows(year: int) -> list[SlamWindow]:
         defs = SLAM_DEFINITIONS
         return [
-            SlamWindow("australian_open", defs["australian_open"]["name"], defs["australian_open"]["location"], date(year, 1, 15), date(year, 1, 29), defs["australian_open"]["official_url"]),
+            SlamWindow("australian_open", defs["australian_open"]["name"], defs["australian_open"]["location"], date(year, 1, 12), date(year, 1, 26), defs["australian_open"]["official_url"]),
             SlamWindow("french_open", defs["french_open"]["name"], defs["french_open"]["location"], date(year, 5, 24), date(year, 6, 7), defs["french_open"]["official_url"]),
             SlamWindow("wimbledon", defs["wimbledon"]["name"], defs["wimbledon"]["location"], date(year, 6, 29), date(year, 7, 12), defs["wimbledon"]["official_url"]),
             SlamWindow("us_open", defs["us_open"]["name"], defs["us_open"]["location"], date(year, 8, 31), date(year, 9, 13), defs["us_open"]["official_url"]),
@@ -338,7 +425,10 @@ class ESPNClient:
         if not value:
             return None
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed
         except ValueError:
             return None
 

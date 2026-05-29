@@ -12,6 +12,17 @@ Eine Custom Integration für Home Assistant/HACS, die automatisch erkennt:
 
 Die Integration nutzt die öffentlichen ESPN-Tennis-Scoreboard-Daten für ATP und WTA. Diese Endpunkte sind praktisch, aber nicht offiziell als stabile öffentliche API garantiert. Falls ESPN die Struktur ändert, muss die Integration angepasst werden.
 
+## Version 0.1.2
+
+Änderungen gegenüber 0.1.1:
+
+- ESPN-Abfrage wird jetzt tageweise statt über einen sehr großen Datumsbereich gemacht.
+- Tournament-Shell-Einträge ohne echte Spieler werden ignoriert.
+- Matches werden aus allen `competitions` eines ESPN-Events gelesen, nicht nur aus dem ersten Eintrag.
+- Match-Attribute enthalten jetzt `name`, `short_name`, `score`, `round`, `status`, `tour` und `start_time`.
+- Der Status-Sensor enthält zusätzlich `current_slam` und `next_slam` als Attribute.
+- Das Dashboard-Beispiel verwendet die Entity-IDs mit dem Prefix `sensor.tennis_grand_slams_...`.
+
 ## Installation über HACS
 
 1. Dieses Repository auf GitHub hochladen.
@@ -26,13 +37,15 @@ Die Integration nutzt die öffentlichen ESPN-Tennis-Scoreboard-Daten für ATP un
 
 Nach der Einrichtung entstehen diese Entitäten:
 
-- `sensor.grand_slam_status`
-- `sensor.tage_bis_zum_nachsten_grand_slam`
-- `sensor.grand_slam_live_matches`
-- `sensor.grand_slam_upcoming_matches`
-- `sensor.grand_slam_recent_results`
-- `sensor.letzte_espn_aktualisierung`
-- `calendar.grand_slam_kalender`
+- `sensor.tennis_grand_slams_grand_slam_status`
+- `sensor.tennis_grand_slams_tage_bis_zum_naechsten_grand_slam`
+- `sensor.tennis_grand_slams_grand_slam_live_matches`
+- `sensor.tennis_grand_slams_grand_slam_upcoming_matches`
+- `sensor.tennis_grand_slams_grand_slam_recent_results`
+- `sensor.tennis_grand_slams_letzte_espn_aktualisierung`
+- `calendar.tennis_grand_slams_grand_slam_kalender`
+
+Home Assistant kann die Entity-IDs je nach bestehender Installation leicht anders vergeben. Im Zweifel unter Entwicklerwerkzeuge → Zustände nach `tennis_grand_slams` suchen.
 
 Die genauen Entity-IDs können je nach Sprache/System leicht abweichen. Im Zweifel in Home Assistant unter Einstellungen → Geräte & Dienste → Entitäten nachsehen.
 

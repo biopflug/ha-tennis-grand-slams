@@ -3,83 +3,89 @@ cards:
   - type: markdown
     title: 🎾 Tennis Grand Slams
     content: >
-      {% set s = states('sensor.grand_slam_status') %}
-      {% set status = state_attr('sensor.grand_slam_status', 'status') %}
-      {% set start = state_attr('sensor.grand_slam_status', 'start') %}
-      {% set end = state_attr('sensor.grand_slam_status', 'end') %}
-      {% set days = state_attr('sensor.grand_slam_status', 'days_text') %}
-      {% set loc = state_attr('sensor.grand_slam_status', 'location') %}
-      ## {{ s }}
+      {% set ent = 'sensor.tennis_grand_slams_grand_slam_status' %}
+      {% set name = states(ent) %}
+      {% set active = state_attr(ent, 'is_active') %}
+      {% set start = state_attr(ent, 'start') %}
+      {% set end = state_attr(ent, 'end') %}
+      {% set loc = state_attr(ent, 'location') %}
+      {% set next = state_attr(ent, 'next_slam') %}
+      ## 🎾 {{ name }}
 
-      {{ status }} · {{ loc }}  
-      {{ start }} bis {{ end }} · {{ days }}
+      {% if active %}
+      **{{ name }} läuft aktuell** · {{ loc }}  
+      Zeitraum: {{ start }} bis {{ end }}
+      {% if next %}
+      Nächstes Grand Slam: {{ next.name }} {{ next.days_text }}
+      {% endif %}
+      {% else %}
+      Nächstes Grand Slam: **{{ name }}** · {{ loc }}  
+      Start: {{ start }} · {{ state_attr(ent, 'days_text') }}
+      {% endif %}
 
-      Live-Spiele: {{ states('sensor.grand_slam_live_matches') }}  
-      Kommende Spiele: {{ states('sensor.grand_slam_upcoming_matches') }}
+      Live: {{ states('sensor.tennis_grand_slams_grand_slam_live_matches') }} ·
+      Kommend: {{ states('sensor.tennis_grand_slams_grand_slam_upcoming_matches') }} ·
+      Ergebnisse: {{ states('sensor.tennis_grand_slams_grand_slam_recent_results') }}
 
-      [Aktuelle Spiele bei ESPN öffnen]({{ state_attr('sensor.grand_slam_status', 'espn_url') }})
+      [Aktuelle Spiele bei ESPN öffnen]({{ state_attr(ent, 'espn_url') }})
 
   - type: entities
     title: Übersicht
     entities:
-      - entity: sensor.grand_slam_status
-        name: Aktuell / nächstes Grand Slam
-      - entity: sensor.tage_bis_zum_nachsten_grand_slam
+      - entity: sensor.tennis_grand_slams_grand_slam_status
+        name: Grand Slam Status
+      - entity: sensor.tennis_grand_slams_tage_bis_zum_naechsten_grand_slam
         name: Tage bis zum nächsten Grand Slam
-      - entity: sensor.grand_slam_live_matches
-        name: Live-Spiele
-      - entity: sensor.grand_slam_upcoming_matches
-        name: Kommende Spiele
-      - entity: sensor.grand_slam_recent_results
+      - entity: sensor.tennis_grand_slams_grand_slam_live_matches
+        name: Live Matches
+      - entity: sensor.tennis_grand_slams_grand_slam_upcoming_matches
+        name: Kommende Matches
+      - entity: sensor.tennis_grand_slams_grand_slam_recent_results
         name: Letzte Ergebnisse
-      - entity: calendar.grand_slam_kalender
-        name: Grand-Slam-Kalender
+      - entity: sensor.tennis_grand_slams_letzte_espn_aktualisierung
+        name: Letzte ESPN Aktualisierung
 
   - type: markdown
-    title: Live-Spiele
+    title: 🎾 Live Matches
     content: >
-      {% set matches = state_attr('sensor.grand_slam_live_matches', 'matches') or [] %}
-      {% if matches | count == 0 %}
-      Gerade sind keine Live-Spiele für das aktuelle bzw. nächste Grand Slam gefunden.
-      {% else %}
+      {% set matches = state_attr('sensor.tennis_grand_slams_grand_slam_live_matches', 'matches') %}
+      {% if matches %}
       {% for m in matches %}
-      **{{ m.short_name }}**  
-      {{ m.tour }} · {{ m.status }}  
-      {% for c in m.competitors %}
-      - {{ c.name }}: {{ c.score }}{% if c.sets %} · Sätze: {{ c.sets }}{% endif %}
+      - **{{ m.short_name | default(m.name) }}**  
+        {{ m.status | default('Live') }}
+        {% if m.score %} · {{ m.score }}{% endif %}
+        {% if m.round %} · {{ m.round }}{% endif %}
       {% endfor %}
-
-      {% endfor %}
+      {% else %}
+      Aktuell keine Live-Matches gefunden.
       {% endif %}
 
   - type: markdown
-    title: Kommende Spiele
+    title: 📅 Kommende Matches
     content: >
-      {% set matches = state_attr('sensor.grand_slam_upcoming_matches', 'matches') or [] %}
-      {% if matches | count == 0 %}
-      Keine kommenden Spiele gefunden.
-      {% else %}
-      {% for m in matches[:10] %}
-      **{{ m.short_name }}**  
-      {{ m.tour }} · {{ m.start_time }}  
-      {{ m.status }}
-
+      {% set matches = state_attr('sensor.tennis_grand_slams_grand_slam_upcoming_matches', 'matches') %}
+      {% if matches %}
+      {% for m in matches %}
+      - **{{ m.short_name | default(m.name) }}**  
+        {% if m.start_time %}{{ as_timestamp(m.start_time) | timestamp_custom('%d.%m.%Y %H:%M') }}{% endif %}
+        {% if m.round %} · {{ m.round }}{% endif %}
+        {% if m.tour %} · {{ m.tour }}{% endif %}
       {% endfor %}
+      {% else %}
+      Keine kommenden Matches gefunden.
       {% endif %}
 
   - type: markdown
-    title: Letzte Ergebnisse
+    title: 🏆 Letzte Ergebnisse
     content: >
-      {% set matches = state_attr('sensor.grand_slam_recent_results', 'matches') or [] %}
-      {% if matches | count == 0 %}
-      Keine Ergebnisse gefunden.
+      {% set matches = state_attr('sensor.tennis_grand_slams_grand_slam_recent_results', 'matches') %}
+      {% if matches %}
+      {% for m in matches %}
+      - **{{ m.short_name | default(m.name) }}**  
+        {{ m.status | default('Final') }}
+        {% if m.score %} · {{ m.score }}{% endif %}
+        {% if m.round %} · {{ m.round }}{% endif %}
+      {% endfor %}
       {% else %}
-      {% for m in matches[:10] %}
-      **{{ m.short_name }}**  
-      {{ m.tour }} · {{ m.status }}  
-      {% for c in m.competitors %}
-      - {{ c.name }}: {{ c.score }}{% if c.winner %} ✅{% endif %}
-      {% endfor %}
-
-      {% endfor %}
+      Keine letzten Ergebnisse gefunden.
       {% endif %}

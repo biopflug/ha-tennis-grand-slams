@@ -17,7 +17,7 @@ DEFAULT_DAYS_AHEAD = 420
 DEFAULT_UPDATE_INTERVAL = 15
 DEFAULT_SCAN_INTERVAL = timedelta(minutes=DEFAULT_UPDATE_INTERVAL)
 
-ESPN_BASE = "https://site.web.api.espn.com/apis/site/v2/sports/tennis"
+ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/tennis"
 ESPN_SCOREBOARD = ESPN_BASE + "/{tour}/scoreboard"
 
 TOURS = ("atp", "wta")

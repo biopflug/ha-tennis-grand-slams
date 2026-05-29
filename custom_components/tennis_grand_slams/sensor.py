@@ -75,6 +75,8 @@ class SlamStatusSensor(TennisBaseSensor):
         attrs.update(
             {
                 "is_active": data.current_slam is not None,
+                "current_slam": data.current_slam.as_dict(date.today()) if data.current_slam else None,
+                "next_slam": data.next_slam.as_dict(date.today()) if data.next_slam else None,
                 "live_matches": len(data.live_matches),
                 "upcoming_matches": len(data.upcoming_matches),
                 "recent_results": len(data.recent_results),
