@@ -1,93 +1,32 @@
 # Tennis Grand Slams for Home Assistant
 
-Eine Custom Integration für Home Assistant/HACS, die automatisch erkennt:
+Custom Integration für Home Assistant/HACS.
 
-- welches Tennis-Grand-Slam-Turnier gerade läuft,
-- welches Grand Slam als nächstes kommt,
-- wie viele Tage es bis dahin sind,
-- welche Live-Spiele aktuell zum Grand Slam gefunden werden,
-- welche kommenden Spiele anstehen,
-- welche Ergebnisse zuletzt gefunden wurden,
-- und einen Kalender mit den erkannten Grand-Slam-Zeiträumen bereitstellt.
+Version 0.1.5 nutzt mehrere Fallbacks:
 
-Die Integration nutzt die öffentlichen ESPN-Tennis-Scoreboard-Daten für ATP und WTA. Ab v0.1.3 werden Tagesabfragen, eine Bereichsabfrage und der Default-Scoreboard-Endpunkt kombiniert, weil ESPN Tennisdaten je nach Datum unterschiedlich ausliefert. Diese Endpunkte sind praktisch, aber nicht offiziell als stabile öffentliche API garantiert. Falls ESPN die Struktur ändert, muss die Integration angepasst werden.
+- ESPN Site API Scoreboard für ATP/WTA
+- ESPN Tournament Pages als HTML-Fallback, falls die API nur Turnier-Shells liefert
+- eingebaute Grand-Slam-Kalenderlogik für aktuelles/nächstes Turnier
 
-## Version 0.1.2
-
-Änderungen gegenüber 0.1.1:
-
-- ESPN-Abfrage wird jetzt tageweise statt über einen sehr großen Datumsbereich gemacht.
-- Tournament-Shell-Einträge ohne echte Spieler werden ignoriert.
-- Matches werden aus allen `competitions` eines ESPN-Events gelesen, nicht nur aus dem ersten Eintrag.
-- Match-Attribute enthalten jetzt `name`, `short_name`, `score`, `round`, `status`, `tour` und `start_time`.
-- Der Status-Sensor enthält zusätzlich `current_slam` und `next_slam` als Attribute.
-- Das Dashboard-Beispiel verwendet die Entity-IDs mit dem Prefix `sensor.tennis_grand_slams_...`.
+Die ESPN-Endpunkte sind nicht offiziell als stabile öffentliche API garantiert. Wenn ESPN die Struktur ändert oder HTML/Bot-Schutz ausliefert, muss der Parser angepasst werden.
 
 ## Installation über HACS
 
-1. Dieses Repository auf GitHub hochladen.
-2. In Home Assistant: HACS → Integrationen → Drei Punkte → Benutzerdefinierte Repositories.
-3. Repository-URL einfügen.
-4. Kategorie: `Integration`.
-5. `Tennis Grand Slams` installieren.
-6. Home Assistant neu starten.
-7. Einstellungen → Geräte & Dienste → Integration hinzufügen → `Tennis Grand Slams`.
-
-## Entitäten
-
-Nach der Einrichtung entstehen diese Entitäten:
-
-- `sensor.tennis_grand_slams_grand_slam_status`
-- `sensor.tennis_grand_slams_tage_bis_zum_naechsten_grand_slam`
-- `sensor.tennis_grand_slams_grand_slam_live_matches`
-- `sensor.tennis_grand_slams_grand_slam_upcoming_matches`
-- `sensor.tennis_grand_slams_grand_slam_recent_results`
-- `sensor.tennis_grand_slams_letzte_espn_aktualisierung`
-- `calendar.tennis_grand_slams_grand_slam_kalender`
-
-Home Assistant kann die Entity-IDs je nach bestehender Installation leicht anders vergeben. Im Zweifel unter Entwicklerwerkzeuge → Zustände nach `tennis_grand_slams` suchen.
-
-Die genauen Entity-IDs können je nach Sprache/System leicht abweichen. Im Zweifel in Home Assistant unter Einstellungen → Geräte & Dienste → Entitäten nachsehen.
+1. Repository auf GitHub hochladen.
+2. HACS → Integrationen → Benutzerdefinierte Repositories.
+3. Repository-URL einfügen, Kategorie `Integration`.
+4. Installieren und Home Assistant neu starten.
+5. Einstellungen → Geräte & Dienste → `Tennis Grand Slams` hinzufügen.
 
 ## Dashboard
 
-Eine fertige Dashboard-YAML liegt in:
+Eine Beispielkarte liegt in `examples/dashboard.yaml`.
 
-```text
-examples/dashboard.yaml
-```
+## Debug
 
-Diese kannst du als manuelle Karte in Lovelace einfügen.
+Der Status-Sensor enthält ein `debug`-Attribut. Wichtig sind:
 
-## Was die Integration automatisch macht
-
-Die Integration fragt ATP und WTA über ESPN ab und sucht in den Turnier- bzw. Eventnamen nach:
-
-- Australian Open
-- French Open / Roland Garros
-- Wimbledon
-- US Open
-
-Daraus werden die Grand-Slam-Zeiträume, das aktuelle bzw. nächste Grand Slam und die passenden Matches abgeleitet.
-
-## Optionen
-
-In der Integration kannst du einstellen:
-
-- Region, Standard: `de`
-- Sprache, Standard: `de`
-- Suchzeitraum in Tagen, Standard: `420`
-- Aktualisierungsintervall in Minuten, Standard: `15`
-
-## v0.1.4 Fix
-
-Version 0.1.4 nutzt für Tennis-Scores den Endpoint `site.api.espn.com` statt `site.web.api.espn.com`, weil der Web-Endpoint bei Tennis oft nur Turnier-/Scoreboard-Shells liefert. Dadurch konnten zwar Raw Events gezählt werden, aber keine echten Matches mit Spieler*innen geparst werden.
-
-## Hinweise
-
-Diese Integration verändert dein Dashboard nicht automatisch. Home Assistant/HACS-Integrationen sollten nicht ungefragt Lovelace-Karten anlegen. Deshalb liegt die Dashboard-Konfiguration als Beispiel-Datei bei.
-
-
-## v0.1.3
-
-Diese Version filtert nicht mehr ausschließlich nach Turniernamen aus ESPN. Wenn ESPN Match-Zeilen während eines laufenden Grand Slams ohne Turniername liefert, werden sie über das eingebaute Grand-Slam-Datumsfenster dem aktuellen Turnier zugeordnet. Außerdem gibt es Debug-Attribute am Status-Sensor.
+- `raw_events`: Anzahl ESPN-API-Rohdaten
+- `parsed_matches`: daraus gelesene Matchdaten
+- `page_matches`: über ESPN-Turnierseiten gescrapte Matches
+- `raw_event_samples`: kurze Strukturbeispiele für weitere Fehleranalyse

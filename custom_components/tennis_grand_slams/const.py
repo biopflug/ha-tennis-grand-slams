@@ -28,24 +28,28 @@ SLAM_DEFINITIONS = {
         "aliases": ("australian open",),
         "location": "Melbourne",
         "official_url": "https://ausopen.com/",
+        "espn_event_id": "154",
     },
     "french_open": {
         "name": "French Open",
         "aliases": ("french open", "roland garros", "roland-garros"),
         "location": "Paris",
         "official_url": "https://www.rolandgarros.com/",
+        "espn_event_id": "172",
     },
     "wimbledon": {
         "name": "Wimbledon",
         "aliases": ("wimbledon",),
         "location": "London",
         "official_url": "https://www.wimbledon.com/",
+        "espn_event_id": "188",
     },
     "us_open": {
         "name": "US Open",
         "aliases": ("us open", "u.s. open", "united states open"),
         "location": "New York",
         "official_url": "https://www.usopen.org/",
+        "espn_event_id": "560",
     },
 }
 

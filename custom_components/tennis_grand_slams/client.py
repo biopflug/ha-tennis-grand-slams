@@ -4,7 +4,9 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+import html
 import logging
+import re
 from typing import Any, Iterable
 
 from aiohttp import ClientError, ClientSession
@@ -194,6 +196,19 @@ class ESPNClient:
                 seen_ids.add(match.id)
                 matches.append(match)
 
+        page_fetch_errors = 0
+        page_matches: list[Match] = []
+        if current or next_slam:
+            page_slam = current or next_slam
+            page_matches, page_fetch_errors = await self._async_fetch_tournament_page_matches(page_slam)
+            for match in page_matches:
+                if relevant_key and match.tournament_key != relevant_key:
+                    continue
+                if match.id in seen_ids:
+                    continue
+                seen_ids.add(match.id)
+                matches.append(match)
+
         relevant_matches = [m for m in matches if relevant_key and m.tournament_key == relevant_key]
 
         live_matches = [m for m in relevant_matches if m.is_live]
@@ -216,6 +231,9 @@ class ESPNClient:
             "relevant_matches": len(relevant_matches),
             "dropped_no_players_or_shells": dropped_no_players,
             "dropped_not_slam": dropped_not_slam,
+            "page_matches": len(page_matches),
+            "page_fetch_errors": page_fetch_errors,
+            "raw_event_samples": self._debug_event_samples(events),
             "relevant_key": relevant_key,
             "current_slam": current.name if current else None,
         }
@@ -254,6 +272,213 @@ class ESPNClient:
         max_days = 14
         for offset in range(min((end - start).days + 1, max_days)):
             yield start + timedelta(days=offset)
+
+
+    async def _async_fetch_tournament_page_matches(self, slam: SlamWindow | None) -> tuple[list[Match], int]:
+        """Fetch ESPN tournament pages as fallback when site API only returns tournament shells.
+
+        For tennis, ESPN's JSON scoreboard often returns event shells such as
+        "Roland Garros / Final" without the actual competitors. The public ESPN
+        tournament pages are rendered with the match rows in the HTML. This
+        fallback is intentionally best-effort and also remains harmless if ESPN
+        serves a bot/JS page instead of the real content.
+        """
+        if slam is None:
+            return [], 0
+        event_id = SLAM_DEFINITIONS.get(slam.key, {}).get("espn_event_id")
+        if not event_id:
+            return [], 0
+        year = slam.start.year
+        competition_types = (1, 2, 3, 4, 6)  # men's, women's, doubles, mixed
+        hosts = ("https://www.espn.com", "https://africa.espn.com")
+        tasks = []
+        for host in hosts:
+            for comp_type in competition_types:
+                url = f"{host}/tennis/scoreboard/tournament/_/eventId/{event_id}-{year}/competitionType/{comp_type}"
+                tasks.append((url, comp_type, self._async_fetch_text(url)))
+        payloads = await asyncio.gather(*(task for _, _, task in tasks), return_exceptions=True)
+        matches: list[Match] = []
+        errors = 0
+        seen: set[str] = set()
+        for (url, comp_type, _), payload in zip(tasks, payloads, strict=False):
+            if isinstance(payload, Exception):
+                errors += 1
+                continue
+            for match in self._parse_espn_tournament_html(payload, slam, comp_type, url):
+                if match.id in seen:
+                    continue
+                seen.add(match.id)
+                matches.append(match)
+        return matches, errors
+
+    async def _async_fetch_text(self, url: str) -> str:
+        headers = {
+            "User-Agent": "Mozilla/5.0 HomeAssistant TennisGrandSlams/0.1.5",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        }
+        try:
+            async with self._session.get(url, headers=headers, timeout=20) as response:
+                response.raise_for_status()
+                return await response.text()
+        except (ClientError, asyncio.TimeoutError) as exc:
+            raise TennisGrandSlamError(str(exc)) from exc
+
+    def _parse_espn_tournament_html(self, raw_html: str, slam: SlamWindow, comp_type: int, url: str) -> list[Match]:
+        """Very defensive parser for ESPN tournament pages.
+
+        ESPN does not expose a stable public tennis match API. Search-indexable
+        tournament pages contain readable match rows. We parse only obvious rows
+        with two player/team names and ignore defending-champion/news sections.
+        """
+        if not raw_html or "verify that you're not a robot" in raw_html.lower():
+            return []
+        text = re.sub(r"(?i)<br\s*/?>", "\n", raw_html)
+        text = re.sub(r"(?i)</(div|p|li|h[1-6]|tr|td|span|section|article)>", "\n", text)
+        text = re.sub(r"<[^>]+>", "\n", text)
+        text = html.unescape(text)
+        lines = [ln.strip() for ln in text.splitlines()]
+        lines = [ln for ln in lines if ln and ln not in {"Image", "ESPN", "Tennis", "Scores"}]
+
+        # Keep only the main scoreboard area when possible.
+        start_idx = 0
+        for i, ln in enumerate(lines):
+            if ln.lower().startswith(f"{slam.start.year} ") and "scores" in ln.lower():
+                start_idx = i
+                break
+        stop_idx = len(lines)
+        for i in range(start_idx + 1, len(lines)):
+            low = lines[i].lower()
+            if low.startswith("latest tennis videos") or low.startswith("tennis news") or low.startswith("defending champion") or low.startswith("defending champions"):
+                stop_idx = i
+                break
+        lines = lines[start_idx:stop_idx]
+
+        event_label = {
+            1: "Men's Singles",
+            2: "Women's Singles",
+            3: "Men's Doubles",
+            4: "Women's Doubles",
+            6: "Mixed Doubles",
+        }.get(comp_type, "Tennis")
+
+        matches: list[Match] = []
+        status_words = ("final", "walkover", "retired", "postponed", "suspended", "canceled", "cancelled", "scheduled")
+        status_indexes = [i for i, ln in enumerate(lines) if ln.lower() in status_words or ln.lower().startswith("final -")]
+        # Match cards usually repeat a status line followed by seed/name/score rows.
+        for n, idx in enumerate(status_indexes):
+            block_end = status_indexes[n + 1] if n + 1 < len(status_indexes) else min(len(lines), idx + 30)
+            block = lines[idx:block_end]
+            parsed = self._parse_match_block(block, slam, event_label, comp_type, url, idx)
+            if parsed:
+                matches.append(parsed)
+
+        return matches
+
+    def _parse_match_block(self, block: list[str], slam: SlamWindow, event_label: str, comp_type: int, url: str, idx: int) -> Match | None:
+        names: list[str] = []
+        scores: list[str] = []
+        status = block[0] if block else "Scheduled"
+        court = None
+        for ln in block[1:]:
+            low = ln.lower()
+            if low.startswith("final -"):
+                court = ln.split("-", 1)[1].strip() if "-" in ln else None
+                continue
+            if self._line_is_seed_or_score(ln):
+                if names:
+                    scores.append(ln)
+                continue
+            if any(skip in low for skip in ("defending", "champion", "tickets", "watch", "news", "video")):
+                continue
+            if self._looks_like_player_line(ln):
+                names.append(ln)
+            if len(names) >= 4 and comp_type in (3, 4, 6):
+                break
+            if len(names) >= 2 and comp_type in (1, 2):
+                break
+
+        if comp_type in (3, 4, 6) and len(names) >= 4:
+            left_name = f"{names[0]} / {names[1]}"
+            right_name = f"{names[2]} / {names[3]}"
+        elif len(names) >= 2:
+            left_name, right_name = names[0], names[1]
+        else:
+            return None
+
+        state = self._state_from_status_text(status)
+        score = " - ".join(scores[:2]) if scores else None
+        start_time = datetime.combine(slam.start, datetime.min.time(), tzinfo=timezone.utc)
+        competitors = [
+            {"name": left_name, "short_name": left_name, "score": scores[0] if len(scores) > 0 else None, "winner": None, "sets": []},
+            {"name": right_name, "short_name": right_name, "score": scores[1] if len(scores) > 1 else None, "winner": None, "sets": []},
+        ]
+        match_id = f"espn-page-{slam.key}-{comp_type}-{idx}-{left_name}-{right_name}"
+        return Match(
+            id=match_id,
+            name=f"{left_name} vs. {right_name}",
+            short_name=f"{left_name} vs. {right_name}",
+            tournament=slam.name,
+            tournament_key=slam.key,
+            tour="espn",
+            state=state,
+            status=f"{status}{' - ' + court if court else ''}",
+            start_time=start_time,
+            competitors=competitors,
+            detail=court,
+            score=score,
+            round=event_label,
+            url=url,
+        )
+
+    @staticmethod
+    def _line_is_seed_or_score(text: str) -> bool:
+        stripped = text.strip()
+        if not stripped:
+            return True
+        # seed or ranking number
+        if re.fullmatch(r"\d{1,3}", stripped):
+            return True
+        # tennis score columns: 6 4 7 or 6^{7} 7^{4}
+        if re.fullmatch(r"[0-9\s\^{}()\-]+", stripped):
+            return True
+        return False
+
+    @staticmethod
+    def _looks_like_player_line(text: str) -> bool:
+        if len(text) < 3 or len(text) > 60:
+            return False
+        low = text.lower()
+        banned = ("scores", "singles", "doubles", "mixed", "final", "round", "court", "stadium", "arena", "2026", "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december")
+        if any(word in low for word in banned):
+            return False
+        return bool(re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", text))
+
+    @staticmethod
+    def _state_from_status_text(text: str) -> str:
+        low = (text or "").lower()
+        if any(word in low for word in ("final", "retired", "walkover", "completed")):
+            return "post"
+        if any(word in low for word in ("set", "live", "in progress", "suspended")):
+            return "in"
+        return "pre"
+
+    @staticmethod
+    def _debug_event_samples(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        samples: list[dict[str, Any]] = []
+        for event in events[:5]:
+            competitions = event.get("competitions") or []
+            first = competitions[0] if competitions and isinstance(competitions[0], dict) else {}
+            samples.append({
+                "name": event.get("name"),
+                "shortName": event.get("shortName"),
+                "date": event.get("date"),
+                "tour": event.get("_tour"),
+                "competition_count": len(competitions),
+                "first_competition_keys": sorted(list(first.keys()))[:25] if first else [],
+                "first_competitor_count": len(first.get("competitors") or []) if first else 0,
+                "status": ((first.get("status") or event.get("status") or {}).get("type") or {}).get("description") if isinstance((first.get("status") or event.get("status") or {}), dict) else None,
+            })
+        return samples
 
     async def _async_fetch_scoreboard(
         self,
