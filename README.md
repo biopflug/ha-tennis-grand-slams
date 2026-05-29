@@ -10,7 +10,7 @@ Eine Custom Integration für Home Assistant/HACS, die automatisch erkennt:
 - welche Ergebnisse zuletzt gefunden wurden,
 - und einen Kalender mit den erkannten Grand-Slam-Zeiträumen bereitstellt.
 
-Die Integration nutzt die öffentlichen ESPN-Tennis-Scoreboard-Daten für ATP und WTA. Diese Endpunkte sind praktisch, aber nicht offiziell als stabile öffentliche API garantiert. Falls ESPN die Struktur ändert, muss die Integration angepasst werden.
+Die Integration nutzt die öffentlichen ESPN-Tennis-Scoreboard-Daten für ATP und WTA. Ab v0.1.3 werden Tagesabfragen, eine Bereichsabfrage und der Default-Scoreboard-Endpunkt kombiniert, weil ESPN Tennisdaten je nach Datum unterschiedlich ausliefert. Diese Endpunkte sind praktisch, aber nicht offiziell als stabile öffentliche API garantiert. Falls ESPN die Struktur ändert, muss die Integration angepasst werden.
 
 ## Version 0.1.2
 
@@ -82,3 +82,8 @@ In der Integration kannst du einstellen:
 ## Hinweise
 
 Diese Integration verändert dein Dashboard nicht automatisch. Home Assistant/HACS-Integrationen sollten nicht ungefragt Lovelace-Karten anlegen. Deshalb liegt die Dashboard-Konfiguration als Beispiel-Datei bei.
+
+
+## v0.1.3
+
+Diese Version filtert nicht mehr ausschließlich nach Turniernamen aus ESPN. Wenn ESPN Match-Zeilen während eines laufenden Grand Slams ohne Turniername liefert, werden sie über das eingebaute Grand-Slam-Datumsfenster dem aktuellen Turnier zugeordnet. Außerdem gibt es Debug-Attribute am Status-Sensor.

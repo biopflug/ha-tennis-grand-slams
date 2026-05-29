@@ -70,7 +70,7 @@ class SlamStatusSensor(TennisBaseSensor):
         data = self.coordinator.data
         slam = data.current_slam or data.next_slam
         if slam is None:
-            return {"espn_url": ESPN_SCOREBOARD_URL, "live_matches": 0, "upcoming_matches": 0}
+            return {"espn_url": ESPN_SCOREBOARD_URL, "live_matches": 0, "upcoming_matches": 0, "debug": data.debug}
         attrs = slam.as_dict(date.today())
         attrs.update(
             {
@@ -82,6 +82,7 @@ class SlamStatusSensor(TennisBaseSensor):
                 "recent_results": len(data.recent_results),
                 "espn_url": ESPN_SCOREBOARD_URL,
                 "all_known_slams": [s.as_dict(date.today()) for s in data.slam_windows],
+                "debug": data.debug,
             }
         )
         return attrs
@@ -94,7 +95,9 @@ class NextSlamSensor(TennisBaseSensor):
     _attr_native_unit_of_measurement = UnitOfTime.DAYS
 
     def __init__(self, coordinator: TennisGrandSlamCoordinator) -> None:
-        super().__init__(coordinator, "tage_bis_zum_naechsten_grand_slam", "Tage bis zum nächsten Grand Slam")
+        # Keep the older object id spelling without ae because existing HA
+        # installations may already have this entity id in their dashboards.
+        super().__init__(coordinator, "tage_bis_zum_nachsten_grand_slam", "Tage bis zum nächsten Grand Slam")
 
     @property
     def native_value(self) -> int | None:
@@ -124,7 +127,7 @@ class LiveMatchesSensor(TennisBaseSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         # Keep this list intentionally capped to reduce recorder noise.
-        return {"matches": [m.as_dict() for m in self.coordinator.data.live_matches[:20]]}
+        return {"matches": [m.as_dict() for m in self.coordinator.data.live_matches[:20]], "debug": self.coordinator.data.debug}
 
 
 class UpcomingMatchesSensor(TennisBaseSensor):
@@ -141,7 +144,7 @@ class UpcomingMatchesSensor(TennisBaseSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"matches": [m.as_dict() for m in self.coordinator.data.upcoming_matches[:30]]}
+        return {"matches": [m.as_dict() for m in self.coordinator.data.upcoming_matches[:30]], "debug": self.coordinator.data.debug}
 
 
 class RecentResultsSensor(TennisBaseSensor):
@@ -158,7 +161,7 @@ class RecentResultsSensor(TennisBaseSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"matches": [m.as_dict() for m in self.coordinator.data.recent_results[:20]]}
+        return {"matches": [m.as_dict() for m in self.coordinator.data.recent_results[:20]], "debug": self.coordinator.data.debug}
 
 
 class LastUpdateSensor(TennisBaseSensor):

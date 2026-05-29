@@ -16,7 +16,7 @@ cards:
       **{{ name }} läuft aktuell** · {{ loc }}  
       Zeitraum: {{ start }} bis {{ end }}
       {% if next %}
-      Nächstes Grand Slam: {{ next.name }} {{ next.days_text }}
+      Nächstes Grand Slam: {{ next.name }} {{ next.days_text }}.
       {% endif %}
       {% else %}
       Nächstes Grand Slam: **{{ name }}** · {{ loc }}  
@@ -34,8 +34,6 @@ cards:
     entities:
       - entity: sensor.tennis_grand_slams_grand_slam_status
         name: Grand Slam Status
-      - entity: sensor.tennis_grand_slams_tage_bis_zum_naechsten_grand_slam
-        name: Tage bis zum nächsten Grand Slam
       - entity: sensor.tennis_grand_slams_grand_slam_live_matches
         name: Live Matches
       - entity: sensor.tennis_grand_slams_grand_slam_upcoming_matches
@@ -88,4 +86,15 @@ cards:
       {% endfor %}
       {% else %}
       Keine letzten Ergebnisse gefunden.
+      {% endif %}
+
+  - type: markdown
+    title: Debug
+    content: >
+      {% set dbg = state_attr('sensor.tennis_grand_slams_grand_slam_status', 'debug') %}
+      {% if dbg %}
+      Raw Events: {{ dbg.raw_events }} · Parsed Matches: {{ dbg.parsed_matches }} · Relevant: {{ dbg.relevant_matches }} · Fetch Errors: {{ dbg.fetch_errors }}  
+      Zeitraum: {{ dbg.fetch_start }} bis {{ dbg.fetch_end }} · Key: {{ dbg.relevant_key }}
+      {% else %}
+      Keine Debug-Daten gefunden.
       {% endif %}
