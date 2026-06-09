@@ -47,7 +47,7 @@ class GrandSlamCalendar(CoordinatorEntity[TennisGrandSlamCoordinator], CalendarE
             start=slam.start,
             end=slam.end + timedelta(days=1),
             location=slam.location,
-            description=f"{slam.name} · {slam.official_url}",
+            description=f"{slam.name} - {slam.official_url}",
         )
 
     async def async_get_events(self, hass, start_date: datetime, end_date: datetime) -> list[CalendarEvent]:

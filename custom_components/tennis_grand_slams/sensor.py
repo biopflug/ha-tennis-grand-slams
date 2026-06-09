@@ -1,7 +1,6 @@
 """Sensors for Tennis Grand Slams."""
 from __future__ import annotations
 
-from datetime import date
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
@@ -9,6 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTime
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, ESPN_SCOREBOARD_URL
@@ -22,6 +22,7 @@ async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> Non
         [
             SlamStatusSensor(coordinator),
             NextSlamSensor(coordinator),
+            TodayMatchesSensor(coordinator),
             LiveMatchesSensor(coordinator),
             UpcomingMatchesSensor(coordinator),
             RecentResultsSensor(coordinator),
@@ -71,17 +72,19 @@ class SlamStatusSensor(TennisBaseSensor):
         slam = data.current_slam or data.next_slam
         if slam is None:
             return {"espn_url": ESPN_SCOREBOARD_URL, "live_matches": 0, "upcoming_matches": 0, "debug": data.debug}
-        attrs = slam.as_dict(date.today())
+        today = dt_util.now().date()
+        attrs = slam.as_dict(today)
         attrs.update(
             {
                 "is_active": data.current_slam is not None,
-                "current_slam": data.current_slam.as_dict(date.today()) if data.current_slam else None,
-                "next_slam": data.next_slam.as_dict(date.today()) if data.next_slam else None,
+                "current_slam": data.current_slam.as_dict(today) if data.current_slam else None,
+                "next_slam": data.next_slam.as_dict(today) if data.next_slam else None,
+                "today_matches": len(data.today_matches),
                 "live_matches": len(data.live_matches),
                 "upcoming_matches": len(data.upcoming_matches),
                 "recent_results": len(data.recent_results),
                 "espn_url": ESPN_SCOREBOARD_URL,
-                "all_known_slams": [s.as_dict(date.today()) for s in data.slam_windows],
+                "all_known_slams": [s.as_dict(today) for s in data.slam_windows],
                 "debug": data.debug,
             }
         )
@@ -97,19 +100,36 @@ class NextSlamSensor(TennisBaseSensor):
     def __init__(self, coordinator: TennisGrandSlamCoordinator) -> None:
         # Keep the older object id spelling without ae because existing HA
         # installations may already have this entity id in their dashboards.
-        super().__init__(coordinator, "tage_bis_zum_nachsten_grand_slam", "Tage bis zum nächsten Grand Slam")
+        super().__init__(coordinator, "tage_bis_zum_nachsten_grand_slam", "Tage bis zum naechsten Grand Slam")
 
     @property
     def native_value(self) -> int | None:
         slam = self.coordinator.data.next_slam
         if slam is None:
             return None
-        return max((slam.start - date.today()).days, 0)
+        return max((slam.start - dt_util.now().date()).days, 0)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         slam = self.coordinator.data.next_slam
-        return slam.as_dict(date.today()) if slam else {}
+        return slam.as_dict(dt_util.now().date()) if slam else {}
+
+
+class TodayMatchesSensor(TennisBaseSensor):
+    """Today's Grand Slam match count."""
+
+    _attr_icon = "mdi:calendar-today"
+
+    def __init__(self, coordinator: TennisGrandSlamCoordinator) -> None:
+        super().__init__(coordinator, "grand_slam_today_matches", "Grand Slam Matches Heute")
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.data.today_matches)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"matches": [m.as_dict() for m in self.coordinator.data.today_matches[:50]], "debug": self.coordinator.data.debug}
 
 
 class LiveMatchesSensor(TennisBaseSensor):

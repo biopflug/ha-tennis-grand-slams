@@ -38,6 +38,7 @@ class TennisGrandSlamCoordinator(DataUpdateCoordinator[TennisData]):
             region=options.get(CONF_REGION, DEFAULT_REGION),
             language=options.get(CONF_LANGUAGE, DEFAULT_LANGUAGE),
             days_ahead=int(options.get(CONF_DAYS_AHEAD, DEFAULT_DAYS_AHEAD)),
+            time_zone=hass.config.time_zone,
         )
         interval = int(options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL))
         super().__init__(

@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Set up Tennis Grand Slams",
-        "description": "Fetches Grand Slam dates, live matches and upcoming matches via ESPN tennis data.",
+        "description": "Fetches Grand Slam dates, today's matches, live matches and upcoming matches via ESPN tennis data.",
         "data": {
           "name": "Name",
           "region": "Region",

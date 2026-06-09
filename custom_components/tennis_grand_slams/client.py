@@ -8,6 +8,7 @@ import html
 import logging
 import re
 from typing import Any, Iterable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiohttp import ClientError, ClientSession
 
@@ -58,11 +59,13 @@ class Match:
             "name": self.name,
             "short_name": self.short_name,
             "tournament": self.tournament,
+            "tournament_key": self.tournament_key,
             "tour": self.tour.upper(),
             "state": self.state,
             "status": self.status,
             "detail": self.detail,
             "score": self.score,
+            "current_score": self.score,
             "round": self.round,
             "start_time": self.start_time.isoformat() if self.start_time else None,
             "competitors": self.competitors,
@@ -92,7 +95,7 @@ class SlamWindow:
             "location": self.location,
             "start": self.start.isoformat(),
             "end": self.end.isoformat(),
-            "status": "Läuft aktuell" if active else "Nächstes Grand Slam",
+            "status": "Laeuft aktuell" if active else "Naechstes Grand Slam",
             "days": days,
             "days_text": f"noch {days} Tage" if active else f"in {days} Tagen",
             "official_url": self.official_url,
@@ -107,6 +110,7 @@ class TennisData:
     current_slam: SlamWindow | None
     next_slam: SlamWindow | None
     slam_windows: list[SlamWindow]
+    today_matches: list[Match]
     live_matches: list[Match]
     upcoming_matches: list[Match]
     recent_results: list[Match]
@@ -133,15 +137,22 @@ class ESPNClient:
         region: str,
         language: str,
         days_ahead: int,
+        time_zone: str,
     ) -> None:
         self._session = session
         self._region = region
         self._language = language
         self._days_ahead = days_ahead
+        self._time_zone_name = time_zone or "UTC"
+        try:
+            self._time_zone = ZoneInfo(self._time_zone_name)
+        except ZoneInfoNotFoundError:
+            _LOGGER.warning("Unknown Home Assistant time zone %s, falling back to UTC", self._time_zone_name)
+            self._time_zone = timezone.utc
 
     async def async_get_data(self) -> TennisData:
         """Fetch and normalize all tennis data."""
-        today = datetime.now(timezone.utc).date()
+        today = datetime.now(self._time_zone).date()
         slam_windows = self._fallback_windows(today.year) + self._fallback_windows(today.year + 1)
         current = next((s for s in slam_windows if s.start <= today <= s.end), None)
         upcoming_slams = [s for s in slam_windows if s.start > today]
@@ -212,16 +223,21 @@ class ESPNClient:
         relevant_matches = [m for m in matches if relevant_key and m.tournament_key == relevant_key]
 
         live_matches = [m for m in relevant_matches if m.is_live]
+        today_matches = [
+            m for m in relevant_matches
+            if m.is_live or self._local_match_date(m) == today
+        ]
         upcoming_matches = [
             m for m in relevant_matches
-            if m.is_upcoming and (m.start_time is None or m.start_time.date() >= today)
+            if m.is_upcoming and (self._local_match_date(m) is None or self._local_match_date(m) >= today)
         ]
         recent_results = [
             m for m in relevant_matches
-            if m.is_complete and (m.start_time is None or m.start_time.date() >= today - timedelta(days=5))
+            if m.is_complete and (self._local_match_date(m) is None or self._local_match_date(m) >= today - timedelta(days=5))
         ]
 
         debug = {
+            "time_zone": self._time_zone_name,
             "fetch_start": fetch_start.isoformat(),
             "fetch_end": fetch_end.isoformat(),
             "requests": len(requests),
@@ -229,6 +245,7 @@ class ESPNClient:
             "raw_events": len(events),
             "parsed_matches": len(matches),
             "relevant_matches": len(relevant_matches),
+            "today_matches": len(today_matches),
             "dropped_no_players_or_shells": dropped_no_players,
             "dropped_not_slam": dropped_not_slam,
             "page_matches": len(page_matches),
@@ -242,6 +259,7 @@ class ESPNClient:
             current_slam=current,
             next_slam=next_slam,
             slam_windows=slam_windows,
+            today_matches=sorted(today_matches, key=self._sort_match)[:80],
             live_matches=sorted(live_matches, key=self._sort_match),
             upcoming_matches=sorted(upcoming_matches, key=self._sort_match)[:60],
             recent_results=sorted(recent_results, key=self._sort_match, reverse=True)[:50],
@@ -260,10 +278,10 @@ class ESPNClient:
         look_back = today - timedelta(days=2)
         if current:
             # During a running slam, the user mostly needs today + coming days.
-            return max(current.start, look_back), min(current.end, today + timedelta(days=7))
+            return max(current.start, look_back), min(current.end, today + timedelta(days=min(self._days_ahead, 14)))
         if next_slam:
-            return max(today, next_slam.start - timedelta(days=1)), min(next_slam.end, next_slam.start + timedelta(days=7))
-        return look_back, today + timedelta(days=7)
+            return max(today, next_slam.start - timedelta(days=1)), min(next_slam.end, next_slam.start + timedelta(days=min(self._days_ahead, 14)))
+        return look_back, today + timedelta(days=min(self._days_ahead, 14))
 
     @staticmethod
     def _date_range(start: date, end: date) -> Iterable[date]:
@@ -313,7 +331,7 @@ class ESPNClient:
 
     async def _async_fetch_text(self, url: str) -> str:
         headers = {
-            "User-Agent": "Mozilla/5.0 HomeAssistant TennisGrandSlams/0.1.5",
+            "User-Agent": "Mozilla/5.0 HomeAssistant TennisGrandSlams/0.2.0",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
         try:
@@ -407,7 +425,7 @@ class ESPNClient:
 
         state = self._state_from_status_text(status)
         score = " - ".join(scores[:2]) if scores else None
-        start_time = datetime.combine(slam.start, datetime.min.time(), tzinfo=timezone.utc)
+        start_time = None
         competitors = [
             {"name": left_name, "short_name": left_name, "score": scores[0] if len(scores) > 0 else None, "winner": None, "sets": []},
             {"name": right_name, "short_name": right_name, "score": scores[1] if len(scores) > 1 else None, "winner": None, "sets": []},
@@ -451,7 +469,7 @@ class ESPNClient:
         banned = ("scores", "singles", "doubles", "mixed", "final", "round", "court", "stadium", "arena", "2026", "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december")
         if any(word in low for word in banned):
             return False
-        return bool(re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", text))
+        return bool(re.search(r"[^\W\d_]", text))
 
     @staticmethod
     def _state_from_status_text(text: str) -> str:
@@ -600,7 +618,7 @@ class ESPNClient:
     def _event_date(self, event: dict[str, Any]) -> date | None:
         parsed = self._parse_dt(event.get("date"))
         if parsed:
-            return parsed.date()
+            return parsed.astimezone(self._time_zone).date()
         query_date = event.get("_query_date")
         if query_date:
             try:
@@ -608,6 +626,11 @@ class ESPNClient:
             except ValueError:
                 return None
         return None
+
+    def _local_match_date(self, match: Match) -> date | None:
+        if match.start_time is None:
+            return None
+        return match.start_time.astimezone(self._time_zone).date()
 
     @staticmethod
     def _normalize_state(status_type: dict[str, Any]) -> str:
@@ -679,7 +702,7 @@ class ESPNClient:
         lowered = text.replace(" v. ", " vs ").replace(" vs. ", " vs ")
         for sep in (" vs ", " VS ", " v ", " @ "):
             if sep in lowered:
-                parts = [p.strip(" -–—") for p in lowered.split(sep, 1)]
+                parts = [p.strip(" -\u2013\u2014") for p in lowered.split(sep, 1)]
                 if len(parts) == 2 and all(parts):
                     return parts
         return []
@@ -752,12 +775,30 @@ class ESPNClient:
     @staticmethod
     def _fallback_windows(year: int) -> list[SlamWindow]:
         defs = SLAM_DEFINITIONS
+        australian_open_start = ESPNClient._nth_weekday(year, 1, 6, 3)
+        french_open_start = ESPNClient._first_weekday_on_or_after(date(year, 5, 22), 6)
+        wimbledon_start = ESPNClient._first_weekday_on_or_after(date(year, 6, 27), 0)
+        us_open_start = ESPNClient._last_weekday_on_or_before(date(year, 8, 31), 0)
         return [
-            SlamWindow("australian_open", defs["australian_open"]["name"], defs["australian_open"]["location"], date(year, 1, 12), date(year, 1, 26), defs["australian_open"]["official_url"]),
-            SlamWindow("french_open", defs["french_open"]["name"], defs["french_open"]["location"], date(year, 5, 24), date(year, 6, 7), defs["french_open"]["official_url"]),
-            SlamWindow("wimbledon", defs["wimbledon"]["name"], defs["wimbledon"]["location"], date(year, 6, 29), date(year, 7, 12), defs["wimbledon"]["official_url"]),
-            SlamWindow("us_open", defs["us_open"]["name"], defs["us_open"]["location"], date(year, 8, 31), date(year, 9, 13), defs["us_open"]["official_url"]),
+            SlamWindow("australian_open", defs["australian_open"]["name"], defs["australian_open"]["location"], australian_open_start, australian_open_start + timedelta(days=14), defs["australian_open"]["official_url"]),
+            SlamWindow("french_open", defs["french_open"]["name"], defs["french_open"]["location"], french_open_start, french_open_start + timedelta(days=14), defs["french_open"]["official_url"]),
+            SlamWindow("wimbledon", defs["wimbledon"]["name"], defs["wimbledon"]["location"], wimbledon_start, wimbledon_start + timedelta(days=13), defs["wimbledon"]["official_url"]),
+            SlamWindow("us_open", defs["us_open"]["name"], defs["us_open"]["location"], us_open_start, us_open_start + timedelta(days=13), defs["us_open"]["official_url"]),
         ]
+
+    @staticmethod
+    def _nth_weekday(year: int, month: int, weekday: int, nth: int) -> date:
+        current = date(year, month, 1)
+        current += timedelta(days=(weekday - current.weekday()) % 7)
+        return current + timedelta(days=7 * (nth - 1))
+
+    @staticmethod
+    def _first_weekday_on_or_after(start: date, weekday: int) -> date:
+        return start + timedelta(days=(weekday - start.weekday()) % 7)
+
+    @staticmethod
+    def _last_weekday_on_or_before(start: date, weekday: int) -> date:
+        return start - timedelta(days=(start.weekday() - weekday) % 7)
 
     @staticmethod
     def _parse_dt(value: str | None) -> datetime | None:

@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Tennis Grand Slams einrichten",
-        "description": "Ruft Grand-Slam-Termine, Live-Spiele und kommende Spiele über ESPN-Tennisdaten ab.",
+        "description": "Ruft Grand-Slam-Termine, heutige Spiele, Live-Spiele und kommende Spiele ueber ESPN-Tennisdaten ab.",
         "data": {
           "name": "Name",
           "region": "Region",

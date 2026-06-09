@@ -1,100 +1,11 @@
-type: vertical-stack
-cards:
-  - type: markdown
-    title: 🎾 Tennis Grand Slams
-    content: >
-      {% set ent = 'sensor.tennis_grand_slams_grand_slam_status' %}
-      {% set name = states(ent) %}
-      {% set active = state_attr(ent, 'is_active') %}
-      {% set start = state_attr(ent, 'start') %}
-      {% set end = state_attr(ent, 'end') %}
-      {% set loc = state_attr(ent, 'location') %}
-      {% set next = state_attr(ent, 'next_slam') %}
-      ## 🎾 {{ name }}
-
-      {% if active %}
-      **{{ name }} läuft aktuell** · {{ loc }}  
-      Zeitraum: {{ start }} bis {{ end }}
-      {% if next %}
-      Nächstes Grand Slam: {{ next.name }} {{ next.days_text }}.
-      {% endif %}
-      {% else %}
-      Nächstes Grand Slam: **{{ name }}** · {{ loc }}  
-      Start: {{ start }} · {{ state_attr(ent, 'days_text') }}
-      {% endif %}
-
-      Live: {{ states('sensor.tennis_grand_slams_grand_slam_live_matches') }} ·
-      Kommend: {{ states('sensor.tennis_grand_slams_grand_slam_upcoming_matches') }} ·
-      Ergebnisse: {{ states('sensor.tennis_grand_slams_grand_slam_recent_results') }}
-
-      [Aktuelle Spiele bei ESPN öffnen]({{ state_attr(ent, 'espn_url') }})
-
-  - type: entities
-    title: Übersicht
-    entities:
-      - entity: sensor.tennis_grand_slams_grand_slam_status
-        name: Grand Slam Status
-      - entity: sensor.tennis_grand_slams_grand_slam_live_matches
-        name: Live Matches
-      - entity: sensor.tennis_grand_slams_grand_slam_upcoming_matches
-        name: Kommende Matches
-      - entity: sensor.tennis_grand_slams_grand_slam_recent_results
-        name: Letzte Ergebnisse
-      - entity: sensor.tennis_grand_slams_letzte_espn_aktualisierung
-        name: Letzte ESPN Aktualisierung
-
-  - type: markdown
-    title: 🎾 Live Matches
-    content: >
-      {% set matches = state_attr('sensor.tennis_grand_slams_grand_slam_live_matches', 'matches') %}
-      {% if matches %}
-      {% for m in matches %}
-      - **{{ m.short_name | default(m.name) }}**  
-        {{ m.status | default('Live') }}
-        {% if m.score %} · {{ m.score }}{% endif %}
-        {% if m.round %} · {{ m.round }}{% endif %}
-      {% endfor %}
-      {% else %}
-      Aktuell keine Live-Matches gefunden.
-      {% endif %}
-
-  - type: markdown
-    title: 📅 Kommende Matches
-    content: >
-      {% set matches = state_attr('sensor.tennis_grand_slams_grand_slam_upcoming_matches', 'matches') %}
-      {% if matches %}
-      {% for m in matches %}
-      - **{{ m.short_name | default(m.name) }}**  
-        {% if m.start_time %}{{ as_timestamp(m.start_time) | timestamp_custom('%d.%m.%Y %H:%M') }}{% endif %}
-        {% if m.round %} · {{ m.round }}{% endif %}
-        {% if m.tour %} · {{ m.tour }}{% endif %}
-      {% endfor %}
-      {% else %}
-      Keine kommenden Matches gefunden.
-      {% endif %}
-
-  - type: markdown
-    title: 🏆 Letzte Ergebnisse
-    content: >
-      {% set matches = state_attr('sensor.tennis_grand_slams_grand_slam_recent_results', 'matches') %}
-      {% if matches %}
-      {% for m in matches %}
-      - **{{ m.short_name | default(m.name) }}**  
-        {{ m.status | default('Final') }}
-        {% if m.score %} · {{ m.score }}{% endif %}
-        {% if m.round %} · {{ m.round }}{% endif %}
-      {% endfor %}
-      {% else %}
-      Keine letzten Ergebnisse gefunden.
-      {% endif %}
-
-  - type: markdown
-    title: Debug
-    content: >
-      {% set dbg = state_attr('sensor.tennis_grand_slams_grand_slam_status', 'debug') %}
-      {% if dbg %}
-      Raw Events: {{ dbg.raw_events }} · Parsed Matches: {{ dbg.parsed_matches }} · Relevant: {{ dbg.relevant_matches }} · Fetch Errors: {{ dbg.fetch_errors }}  
-      Zeitraum: {{ dbg.fetch_start }} bis {{ dbg.fetch_end }} · Key: {{ dbg.relevant_key }}
-      {% else %}
-      Keine Debug-Daten gefunden.
-      {% endif %}
+# Lovelace resource first:
+# URL: /tennis_grand_slams/frontend/tennis-grand-slam-card.js
+# Resource type: JavaScript module
+type: custom:tennis-grand-slam-card
+status_entity: sensor.tennis_grand_slams_grand_slam_status
+today_entity: sensor.tennis_grand_slams_grand_slam_today_matches
+live_entity: sensor.tennis_grand_slams_grand_slam_live_matches
+upcoming_entity: sensor.tennis_grand_slams_grand_slam_upcoming_matches
+results_entity: sensor.tennis_grand_slams_grand_slam_recent_results
+max_matches: 14
+show_recent_results: true
