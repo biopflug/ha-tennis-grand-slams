@@ -152,7 +152,7 @@ class ESPNClient:
 
     async def async_get_data(self) -> TennisData:
         """Fetch and normalize all tennis data."""
-        today = datetime.now(self._time_zone).date()
+        today = date(2026, 7, 12)  # Historical Wimbledon test
         slam_windows = self._fallback_windows(today.year) + self._fallback_windows(today.year + 1)
         current = next((s for s in slam_windows if s.start <= today <= s.end), None)
         upcoming_slams = [s for s in slam_windows if s.start > today]
