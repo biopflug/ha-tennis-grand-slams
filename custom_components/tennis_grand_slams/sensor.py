@@ -8,7 +8,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTime
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import EntityCategory
-from homeassistant.util import dt as dt_util
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, ESPN_SCOREBOARD_URL
@@ -72,7 +71,7 @@ class SlamStatusSensor(TennisBaseSensor):
         slam = data.current_slam or data.next_slam
         if slam is None:
             return {"espn_url": ESPN_SCOREBOARD_URL, "live_matches": 0, "upcoming_matches": 0, "debug": data.debug}
-        today = dt_util.now().date()
+        today = data.reference_date
         attrs = slam.as_dict(today)
         attrs.update(
             {
@@ -107,12 +106,12 @@ class NextSlamSensor(TennisBaseSensor):
         slam = self.coordinator.data.next_slam
         if slam is None:
             return None
-        return max((slam.start - dt_util.now().date()).days, 0)
+        return max((slam.start - self.coordinator.data.reference_date).days, 0)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         slam = self.coordinator.data.next_slam
-        return slam.as_dict(dt_util.now().date()) if slam else {}
+        return slam.as_dict(self.coordinator.data.reference_date) if slam else {}
 
 
 class TodayMatchesSensor(TennisBaseSensor):
