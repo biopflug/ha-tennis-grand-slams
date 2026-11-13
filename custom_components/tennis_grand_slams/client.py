@@ -186,7 +186,6 @@ class ESPNClient:
                 event = dict(event)
                 event["_tour"] = tour
                 event["_query_mode"] = mode
-                event["_query_date"] = value.isoformat() if isinstance(value, date) else None
                 events.append(event)
 
         matches: list[Match] = []
@@ -194,7 +193,7 @@ class ESPNClient:
         dropped_no_players = 0
         dropped_not_slam = 0
         for event in events:
-            event_matches = self._event_to_matches(event, current=current, relevant_key=relevant_key)
+            event_matches = self._event_to_matches(event, relevant_key=relevant_key)
             if not event_matches:
                 # These counters are approximate but helpful in HA attributes.
                 if self._looks_like_match_shell(event):
@@ -527,7 +526,6 @@ class ESPNClient:
         self,
         event: dict[str, Any],
         *,
-        current: SlamWindow | None,
         relevant_key: str | None,
     ) -> list[Match]:
         """Convert one ESPN event to zero, one or many match entities."""
@@ -540,14 +538,7 @@ class ESPNClient:
         ])
         tournament_key = self._match_slam_key(text_for_key)
 
-        # ESPN tennis payloads sometimes lack the tournament name on match rows.
-        # If we are currently inside a Grand Slam window and the event date is in
-        # that window, classify the match as the current slam instead of dropping it.
-        event_day = self._event_date(event)
-        if tournament_key is None and current and event_day and current.start <= event_day <= current.end:
-            tournament_key = current.key
-            tournament_name = current.name
-
+        # A tournament date can overlap another tour event, so require its identity.
         if tournament_key is None:
             return []
         if relevant_key and tournament_key != relevant_key:
@@ -623,18 +614,6 @@ class ESPNClient:
         ]
         competitions.extend(match for match in event.get("competitions") or [] if isinstance(match, dict))
         return competitions or [event]
-
-    def _event_date(self, event: dict[str, Any]) -> date | None:
-        parsed = self._parse_dt(event.get("date"))
-        if parsed:
-            return parsed.astimezone(self._time_zone).date()
-        query_date = event.get("_query_date")
-        if query_date:
-            try:
-                return date.fromisoformat(query_date)
-            except ValueError:
-                return None
-        return None
 
     def _local_match_date(self, match: Match) -> date | None:
         if match.start_time is None:
