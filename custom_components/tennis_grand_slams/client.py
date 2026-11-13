@@ -115,6 +115,7 @@ class TennisData:
     upcoming_matches: list[Match]
     recent_results: list[Match]
     all_matches: list[Match]
+    reference_date: date
     generated_at: datetime
     debug: dict[str, Any] = field(default_factory=dict)
 
@@ -263,6 +264,7 @@ class ESPNClient:
             upcoming_matches=sorted(upcoming_matches, key=self._sort_match)[:60],
             recent_results=sorted(recent_results, key=self._sort_match, reverse=True)[:50],
             all_matches=sorted(relevant_matches, key=self._sort_match),
+            reference_date=today,
             generated_at=datetime.now(timezone.utc),
             debug=debug,
         )
@@ -582,10 +584,14 @@ class ESPNClient:
             links = competition.get("links") or event.get("links") or []
             url = next((link.get("href") for link in links if link.get("href")), ESPN_SCOREBOARD_URL)
 
-            identifier = str(competition.get("id") or event.get("id") or f"{short_name}-{start_time}-{event.get('_tour')}")
+            competition_id = competition.get("id")
+            if competition_id is not None:
+                identifier = f"{tournament_key}-{competition_id}"
+            else:
+                identifier = f"{tournament_key}-{round_name}-{short_name}-{start_time}"
             matches.append(
                 Match(
-                    id=f"{event.get('_tour','tennis')}-{identifier}",
+                    id=identifier,
                     name=name,
                     short_name=short_name,
                     tournament=tournament_name or SLAM_DEFINITIONS[tournament_key]["name"],
@@ -718,6 +724,10 @@ class ESPNClient:
         for left, right in zip(left_sets, right_sets, strict=False):
             if left in (None, "") or right in (None, ""):
                 continue
+            if isinstance(left, float) and left.is_integer():
+                left = int(left)
+            if isinstance(right, float) and right.is_integer():
+                right = int(right)
             set_parts.append(f"{left}:{right}")
         if set_parts:
             return ", ".join(set_parts)
